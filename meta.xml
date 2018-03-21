@@ -1,0 +1,7 @@
+<meta>
+	<info version="1.0.0" type="script" author="Quindo/Forkerer" />
+
+	<script src="Scripts/Database/Classes/Server/Database.lua" type="server" />
+	<script src="Scripts/Database/Classes/Server/DatabaseTable.lua" type="server" />
+		
+</meta>
