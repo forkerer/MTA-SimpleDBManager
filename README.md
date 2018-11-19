@@ -18,7 +18,7 @@ Example code showing usage of this resource
     
     -- And this is example function that will be ran in coroutine
     function exampleFunc()
-        local queryRes = Database():Query(true, "SELECT * FROM ?", "someTable")
+        local queryRes = Database():Query(true, "SELECT * FROM `??`", "someTable")
         if queryRes then
             iprint(queryRes)
         end
