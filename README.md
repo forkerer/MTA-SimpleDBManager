@@ -18,7 +18,7 @@ Example code showing usage of this resource
     
     -- And this is example function that will be ran in coroutine
     function exampleFunc()
-        local queryRes = Database():Query("SELECT * FROM ?", "someTable")
+        local queryRes = Database():Query(true, "SELECT * FROM ?", "someTable")
         if queryRes then
             iprint(queryRes)
         end
@@ -55,9 +55,10 @@ Example code showing usage of this resource
     Database:GetOption(option) -- Gets value of given option
     Database:RefreshTablesData() -- Refreshses informations about tables in database, should be used if there were any changes to database structure while script is running
     
-    Database:Query(query, ...) -- Runs query in database and returns the result, runs asynchronously if the function is called inside coroutine
+    Database:Query(async, query, ...) -- Runs query in database and returns the result, runs asynchronously if the function is called inside coroutine and async argument is specified as true, otherwise runs blocking version
     Database:Exec(query, ...) -- Exectures statement in database, returns boolean indicating if execution was successful
-    Database:AddRow(tab, row) -- Adds given row to the given table, it checks if database contains that table, the row should be table where index is column, and value at that index is value to be added to table, eg. Database:AddRow("People", {["name"]="John", ["surname"] = "Doe"}) will add John Doe to People table.
+    Database:AddRow(returnID, tab, row) -- Adds given row to the given table, it checks if database contains that table, the row should be table where index is column, and value at that index is value to be added to table, eg. Database:AddRow("People", {["name"]="John", ["surname"] = "Doe"}) will add John Doe to People table. If returnID is set to true, will return id of last auto_incremented columns in affected table, so pretty much id of inserted data.
+    Database:GetLastInsertID(table, colOverride) -- Returns biggest id in given table, colOverride argument is optional, as the function tries to find which column is auto_incremented by itself. If searched id isn't an auto_incremented column, you need to specify colOverride, which is name of column that is id.
 ```
 
 

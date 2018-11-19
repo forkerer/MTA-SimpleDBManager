@@ -154,16 +154,8 @@ function Database:GenerateHostString()
 end
 
 function Database:OpenConnection()
-	-- Check if there isn't an already opened connection
-	if self.connection then
-		outputDebugString( "Tried to open database connection, but there is a connection already open", 1 )
-		return false
-	end
-	-- Check if all details were given
-	if not self:CheckConnectionDetailsValidity() then
-		outputDebugString( "Tried to open database connection, but some connection details are missing", 1 )
-		return false
-	end
+	assert(not self.connection, "(Database:OpenConnection) Connection already open")
+	assert(self:CheckConnectionDetailsValidity(), "(Database:OpenConnection) Connection details missing")
 
 	local hostString = self:GenerateHostString()
 	local options = self:GenerateConnectionOptions()
@@ -180,28 +172,26 @@ function Database:OpenConnection()
 end
 
 function Database:CloseConnection()
-	if self.connection and isElement(self.connection) then
-		destroyElement(self.connection)
-		self.ClearTablesData()
-		self.connection = nil
-	end
+	assert(isElement(self.connection), "(Database:CloseConnection) Connection not a valid object")
+
+	destroyElement(self.connection)
+	self.ClearTablesData()
+	self.connection = nil
 end
 
 -- Generates information about tables in database, used mainly for AddRow
 function Database:GenerateTablesData()
-	if not self.connection then
-		outputDebugString( "Tried to generate tables data in db, but no connection is open", 1 )
-		return false
-	end
+	assert(self.connection, "(Database:GenerateTablesData) No DB Connection")
 
-	local tables = self:Query( "SHOW TABLES" )
+	local fieldString = ("Tables_in_%s"):format(self.dbName)
+	local tables = self:Query(true, "SHOW TABLES" )
 	if tables and type(tables) == "table" then
-		for _,table in ipairs(tables) do
+		for _,tData in ipairs(tables) do
 			-- Generate DatabaseTable class instance for that table
-			table = string.lower(table)
+			local table = string.lower(tData[fieldString])
 			local dbTable = DatabaseTable(table)
 			-- Get columns data for table
-			local tabData = self:Query("DESCRIBE `"..table.."`")
+			local tabData = self:Query(true, "DESCRIBE `??`", table)
 			if tabData and type(tabData) == "table" then
 				dbTable:ProcessColumnsData(tabData)
 			end
@@ -211,6 +201,10 @@ function Database:GenerateTablesData()
 		return false
 	end
 	return true
+end
+
+function Database:GetTableData(tab)
+	return self.dbTablesData[string.lower(tab)]
 end
 
 -- Clears information about tables in database
@@ -224,105 +218,123 @@ function Database:RefreshTablesData()
 	self:GenerateTablesData()
 end
 
-function Database:Query(query, ...)
-	-- Check if connection is even open
-	if not self.connection then
-		outputDebugString( "Tried to query data from Database, but no connection is open", 1 )
-		return false
-	end
-	-- Check if query was even given
-	if type(query) ~= "string" then
-		outputDebugString( "Tried to query data from Database, but no query was given", 1 )
-		return false
+function Database:Query(async, query, ...)
+	assert(self.connection, "(Database:Query) No DB Connection")
+	assert(type(async) == "boolean", "(Database:Query) Wrong async argument")
+	assert(type(query) == "string", "(Database:Query) Wrong query")
+
+	local isAsync = false
+	if async then
+		-- Check if we are running in coroutine, if not set mode to not async
+		local curCoroutine = coroutine.running()
+		if curCoroutine and curCoroutine ~= "main" then
+			isAsync = true
+		end
 	end
 
-	local isAsync = true
-	-- Check if we are running in coroutine, if not set mode to not async
-	local curCoroutine = coroutine.running()
-	if (not curCoroutine) or (curCoroutine == "main") then
-		isAsync = false
-	end
-
+	local queryStr = dbPrepareString(self.connection, query, ...)
 	-- If we are running in async mode, generate required data
 	if isAsync then
 		local queryInfo = {self.curAsyncQueryID}
-		self.asyncQueryTable[self.curAsyncQueryID] = curCoroutine
+		self.asyncQueryTable[self.curAsyncQueryID] = coroutine.running()
 		self.curAsyncQueryID = self.curAsyncQueryID+1
 
 		local han = dbQuery( bind(Database.AsyncQueryCallback, self), queryInfo, self.connection, query, ... )
-		local ret = coroutine.yield()
-		return ret
+		local ret,numAffected,lastID = coroutine.yield()
+		return ret,numAffected,lastID
 	else
 		local han = dbQuery( self.connection, query, ... )
-		return dbPoll(han, -1)
+		local ret,numAffected,lastID = dbPoll(han, -1)
+		if ret == false then
+			error(("(Database:Query) Error while processing query: (%d)%s"):format(numAffected, lastID))
+		end
+		return ret,numAffected,lastID
 	end
 end
 
 function Database:Exec(query, ...)
-	-- Check if connection is even open
-	if not self.connection then
-		outputDebugString( "Tried to exec Database query, but no connection is open", 1 )
-		return false
-	end
-	-- Check if query was even given
-	if type(query) ~= "string" then
-		outputDebugString( "Tried to query data from Database, but no query was given", 1 )
-		return false
-	end
+	assert(self.connection, "(Database:Exec) No DB Connection")
+	assert(type(query) == "string", "(Database:Exec) Wrong query")
 
+	-- outputServerLog(dbPrepareString(self.connection, query, ...))
 	return dbExec(self.connection, query, ...)
 end
 
 -- Adds row from given hash table, eg. {name="newName",color="255;0;0"}
-function Database:AddRow(tab, row)
-	-- Check if connection is even open
-	if not self.connection then
-		outputDebugString( "Tried to add row to Database, but no connection is open", 1 )
-		return false
-	end
-	if not (tab and type(tab)=="string") then
-		outputDebugString( "Tried to add row to table in Database, but no table was given" )
-		return false
-	end
-	if not (row and type(row)=="table") then
-		outputDebugString( "Tried to add row to table in Database, but no row data were given" )
-		return false
-	end
-	if not self.dbTablesData[tab] then
-		outputDebugString( "Tried to add row to table in Database, but DB doesn't contain such table: "..tostring(tab) )
-		return false
-	end
+function Database:AddRow(retID, tab, row)
+	assert(self.connection, "(Database:AddRow) No DB Connection")
+	assert(type(retID) == "boolean", "(Database:AddRow) Wrong retID argument")
+	assert(type(tab) == "string", "(Database:AddRow) Wrong tab name")
+	assert(type(row) == "table", "(Database:AddRow) Wrong row")
+	assert(self:GetTableData(tab), "(Database:AddRow) No table matching given table name")
 
-	local dbTable = self.dbTablesData[tab]
-
+	local dbTable = self:GetTableData(tab)
 	local colsString = ""
 	local valsString = ""
-	local columns = {}
+	local build = {}
 	local vals = {}
 	local i = 1
 	for col,val in pairs(row) do
-		if dbTable:ContainsColumn(col) then
-			if i~=1 then
-				colsString = colsString .. ","
-				valsString = valsString .. ","
-			end
-			colsString = colsString .. col
-			valsString = valsString .. "?"
-			table.insert(vals, val)
-			i = i+1
-		else
-			outputDebugString( "Tried inserting row to table: "..tostring(tab)..", but table doesn't contain given column: "..tostring(col), 1 )
-			return false
+		assert(type(col) == "string", "(Database:AddRow) Non string col")
+		assert(dbTable:ContainsColumn(col), "(Database:AddRow) Table `"..tab.."` doesn't containg column `"..tostring(col).."`")
+		if i~=1 then
+			colsString = colsString .. ","
+			valsString = valsString .. ","
 		end
+		colsString = colsString .. "??"
+		valsString = valsString .. "?"
+		table.insert(build, col)
+		table.insert(vals, val)
+		i = i+1
 	end
 
-	return self:Exec("INSERT INTO `"..tab.."` ("..colsString..") VALUES ("..valsString..")", unpack(vals) )
+	for _,val in ipairs(vals) do
+		table.insert(build, val)
+	end
+
+	local queryStr = dbPrepareString(self.connection, "INSERT INTO `??` ("..colsString..") VALUES ("..valsString..")", tab, unpack(build))
+
+	if retID then
+		local _,_,id = self:Query(false, queryStr)
+		return id
+	else
+		return self:Exec(queryStr)
+	end
+end
+
+function Database:GetLastInsertID(tab, colOverride)
+	assert(type(tab) == "string", "(Database:GetLastInsertID) Wrong tab name")
+	assert(self:GetTableData(tab), "(Database:GetLastInsertID) No table matching given table name")
+
+	local dbTable = self:GetTableData(tab)
+	local fieldName = colOverride
+	if not colOverride then
+		fieldName = dbTable:GetAutoincrementedColumn()
+	end
+	assert(fieldName, "(Database:GetLastInsertID) No fieldName")
+
+	local ret = self:Query(false, "SELECT MAX(??) as maxID FROM ??", fieldName, tab)
+	assert(type(ret) == "table", "(Database:GetLastInsertID) No return from DB query")
+
+	if #ret == 0 then
+		return 1
+	else
+		if ret[1] and ret[1].maxID then
+			return ret[1].maxID
+		else
+			return 1
+		end
+	end
 end
 
 function Database:AsyncQueryCallback(handle, queryID)
-	local ret = dbPoll(handle, 0)
+	local ret,numAffected,lastID = dbPoll(handle, 0)
+	if ret == false then
+		error(("(Database:AsyncQueryCallback) Error while processing query: (%d)%s"):format(numAffected, lastID))
+	end
+
 	local corout = self.asyncQueryTable[queryID]
 	self.asyncQueryTable[queryID] = nil
 
-	coroutine.resume( corout, ret )
+	coroutine.resume( corout, ret, numAffected, lastID )
 end

@@ -48,3 +48,12 @@ function DatabaseTable:IsColumnRequired(col)
 	end
 	return false
 end
+
+function DatabaseTable:GetAutoincrementedColumn()
+	for fName,cData in pairs(self.columns) do
+		if type(cData.Extra) == "string" and string.find2(cData.Extra, "auto_increment") then
+			return cData.Field
+		end
+	end
+	return false;
+end
