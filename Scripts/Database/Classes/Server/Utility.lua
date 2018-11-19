@@ -19,3 +19,13 @@ function bind(func, ...)
 		func(unpack(retTable))
 	end
 end
+
+function string.find2( str, f )
+	local l1 = str:len()
+	local l2 = f:len()
+	for i=1,l1-l2+1 do
+		local s = str:sub(i,i+l2-1)
+		if s==f then return i end
+	end
+	return false
+end
